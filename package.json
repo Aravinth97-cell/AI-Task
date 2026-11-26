@@ -1,0 +1,16 @@
+{
+  "name": "ai-multistep-support-workflow",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Five-step customer support ticket workflow using Node.js and Groq LLM",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node app.js",
+    "samples": "node run-samples.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}

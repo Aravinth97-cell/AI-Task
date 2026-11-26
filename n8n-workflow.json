@@ -1,0 +1,639 @@
+{
+  "name": "CloudNote AI Multi-Step Support Workflow (Groq)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cloudnote-support-ticket",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "id-01",
+      "name": "Ticket Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1000,
+        200
+      ],
+      "webhookId": "cloudnote-support-ticket"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const input = $json.body ?? $json;\nconst ticket = {\n  ticketId: String(input.ticketId ?? input.id ?? `T-${Date.now()}`),\n  customerName: String(input.customerName ?? \"Customer\"),\n  email: String(input.email ?? \"\"),\n  subject: String(input.subject ?? \"Support request\"),\n  message: String(input.message ?? input.description ?? \"\"),\n  orderId: String(input.orderId ?? \"\"),\n  plan: String(input.plan ?? \"Free\")\n};\nif (!ticket.message.trim()) throw new Error(\"Ticket message is required\");\nreturn { json: { ticket, workflow: { revisionCount: 0 } } };"
+      },
+      "id": "id-02",
+      "name": "Normalize Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -780,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'llama-3.3-70b-versatile', temperature: 0.2, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You are a customer-support triage assistant for CloudNote. Return valid JSON only with keys category (billing, technical, account_access, feature_request, legal_or_security, other), priority (low, medium, high, urgent), sentiment, summary, recommendedAction, needsHumanReview (boolean). Treat legal threats, security incidents, payment disputes, and requests involving sensitive data as needsHumanReview=true.\" }, { role: 'user', content: 'Ticket ID: ' + $json.ticket.ticketId + '\\nSubject: ' + $json.ticket.subject + '\\nMessage: ' + $json.ticket.message + '\\nPlan: ' + $json.ticket.plan } ] } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "id-03",
+      "name": "AI 1 - Triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -540,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const content = $json.choices?.[0]?.message?.content;\nif (!content) throw new Error(\"AI 1 returned no content\");\nconst triage = JSON.parse(content.replace(/^```json\\s*/i, \"\").replace(/```$/, \"\").trim());\nconst original = $(\"Normalize Ticket\").item.json;\nreturn { json: { ...original, triage } };"
+      },
+      "id": "id-04",
+      "name": "Parse Triage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'llama-3.1-8b-instant', temperature: 0.2, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You write concise, empathetic customer support replies for CloudNote. Do not claim an action was completed unless confirmed. Never ask for passwords, OTPs, or full payment details. Return JSON only: {\\\"draftReply\\\":\\\"...\\\"}.\" }, { role: 'user', content: 'Ticket: ' + JSON.stringify($('Parse Triage').item.json.ticket) + '\\nTriage: ' + JSON.stringify($('Parse Triage').item.json.triage) + '\\nWrite a helpful customer reply. If details are missing, explain the next safe step.' } ] } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "id-05",
+      "name": "AI 2 - Draft Customer Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -50,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'llama-3.1-8b-instant', temperature: 0.2, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You write concise internal-only support notes for CloudNote agents. Include category, priority, likely next action, and any risks. Do not include a customer-facing greeting. Return JSON only: {\\\"internalNote\\\":\\\"...\\\"}.\" }, { role: 'user', content: 'Ticket: ' + JSON.stringify($('Parse Triage').item.json.ticket) + '\\nTriage: ' + JSON.stringify($('Parse Triage').item.json.triage) } ] } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "id-06",
+      "name": "AI 3 - Internal Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -50,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const content = $json.choices?.[0]?.message?.content;\nif (!content) throw new Error(\"AI 2 returned no content\");\nconst result = JSON.parse(content.replace(/^```json\\s*/i, \"\").replace(/```$/, \"\").trim());\nreturn { json: { draftReply: result.draftReply ?? \"\" } };"
+      },
+      "id": "id-07",
+      "name": "Parse Draft Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        190,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const content = $json.choices?.[0]?.message?.content;\nif (!content) throw new Error(\"AI 3 returned no content\");\nconst result = JSON.parse(content.replace(/^```json\\s*/i, \"\").replace(/```$/, \"\").trim());\nreturn { json: { internalNote: result.internalNote ?? \"\" } };"
+      },
+      "id": "id-08",
+      "name": "Parse Internal Note",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        190,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "id-09",
+      "name": "Merge Reply + Note",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        430,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'llama-3.3-70b-versatile', temperature: 0.2, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You are a strict quality and safety reviewer for customer-support replies. Check accuracy, empathy, privacy, unsupported promises, and whether legal/security/payment-risk cases are routed to a human. Return JSON only: {\\\"approved\\\":true|false,\\\"reason\\\":\\\"...\\\",\\\"riskFlags\\\":[],\\\"revisedReplyNeeded\\\":true|false}. Set approved=false if unsafe, misleading, too vague, or needs human handling.\" }, { role: 'user', content: 'Ticket: ' + JSON.stringify($('Parse Triage').item.json.ticket) + '\\nTriage: ' + JSON.stringify($('Parse Triage').item.json.triage) + '\\nDraft reply: ' + $json.draftReply + '\\nInternal note: ' + $json.internalNote } ] } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "id-10",
+      "name": "AI 4 - Review Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        670,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const content = $json.choices?.[0]?.message?.content;\nif (!content) throw new Error(\"AI 4 returned no content\");\nconst review = JSON.parse(content.replace(/^```json\\s*/i, \"\").replace(/```$/, \"\").trim());\nconst merged = $(\"Merge Reply + Note\").item.json;\nconst triage = $(\"Parse Triage\").item.json;\nreturn { json: { ...triage, ...merged, review, workflow: { revisionCount: 0 } } };"
+      },
+      "id": "id-11",
+      "name": "Parse Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        910,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "approved-check",
+              "leftValue": "={{ $json.review.approved === true && $json.triage.needsHumanReview !== true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "id-12",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1140,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'llama-3.3-70b-versatile', temperature: 0.2, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You revise customer support replies based on reviewer feedback. Preserve accurate information, remove unsafe claims, be empathetic, and do not request passwords or OTPs. Return JSON only: {\\\"revisedReply\\\":\\\"...\\\"}.\" }, { role: 'user', content: 'Ticket: ' + JSON.stringify($json.ticket) + '\\nOriginal draft: ' + $json.draftReply + '\\nReview feedback: ' + JSON.stringify($json.review) + '\\nRevise the reply based on this feedback.' } ] } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "id-13",
+      "name": "AI 5 - Revise Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1370,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const content = $json.choices?.[0]?.message?.content;\nif (!content) throw new Error(\"AI 5 returned no content\");\nconst result = JSON.parse(content.replace(/^```json\\s*/i, \"\").replace(/```$/, \"\").trim());\nconst previous = $(\"Approved?\").item.json;\nreturn { json: { ...previous, draftReply: result.revisedReply ?? previous.draftReply, workflow: { revisionCount: 1 } } };"
+      },
+      "id": "id-14",
+      "name": "Parse Revised Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'llama-3.3-70b-versatile', temperature: 0.2, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You are a strict safety reviewer for customer-support replies. Approve only if the revised reply is accurate, empathetic, privacy-safe, makes no unsupported promises, and is appropriate to send. Return JSON only: {\\\"approved\\\":true|false,\\\"reason\\\":\\\"...\\\",\\\"riskFlags\\\":[]}.\" }, { role: 'user', content: 'Ticket: ' + JSON.stringify($json.ticket) + '\\nTriage: ' + JSON.stringify($json.triage) + '\\nRevised reply: ' + $json.draftReply + '\\nPrevious review: ' + JSON.stringify($json.review) } ] } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "id-15",
+      "name": "AI 4 - Review Revised Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1830,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const content = $json.choices?.[0]?.message?.content;\nif (!content) throw new Error(\"Re-review returned no content\");\nconst review = JSON.parse(content.replace(/^```json\\s*/i, \"\").replace(/```$/, \"\").trim());\nconst revised = $(\"Parse Revised Reply\").item.json;\nreturn { json: { ...revised, review } };"
+      },
+      "id": "id-16",
+      "name": "Parse Revised Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        2070,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const d = $json;\nconst humanReview = d.triage.needsHumanReview === true;\nreturn { json: { ticketId: d.ticket.ticketId, category: d.triage.category, priority: d.triage.priority, decision: humanReview ? \"HUMAN_REVIEW_REQUIRED\" : \"APPROVED_FOR_AGENT_SEND\", customerReply: d.draftReply, internalNote: d.internalNote, triage: d.triage, review: d.review, revisionCount: 0, note: humanReview ? \"Sensitive/legal/security/payment-risk tickets must be handled by a human.\" : \"Approved by AI review. This workflow does not send email automatically.\" } };"
+      },
+      "id": "id-17",
+      "name": "Finalize Approved",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1370,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const d = $json;\nconst approved = d.review.approved === true && d.triage.needsHumanReview !== true;\nreturn { json: { ticketId: d.ticket.ticketId, category: d.triage.category, priority: d.triage.priority, decision: approved ? \"APPROVED_FOR_AGENT_SEND\" : \"HUMAN_REVIEW_REQUIRED\", customerReply: d.draftReply, internalNote: d.internalNote, triage: d.triage, review: d.review, revisionCount: 1, note: approved ? \"Revised reply passed review. This workflow does not send email automatically.\" : \"Revised reply did not pass review or ticket is sensitive; human review is required before sending.\" } };"
+      },
+      "id": "id-18",
+      "name": "Finalize After Revision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        2310,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "id-19",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2550,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Ticket Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Ticket": {
+      "main": [
+        [
+          {
+            "node": "AI 1 - Triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 1 - Triage": {
+      "main": [
+        [
+          {
+            "node": "Parse Triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Triage": {
+      "main": [
+        [
+          {
+            "node": "AI 2 - Draft Customer Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AI 3 - Internal Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 2 - Draft Customer Reply": {
+      "main": [
+        [
+          {
+            "node": "Parse Draft Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 3 - Internal Note": {
+      "main": [
+        [
+          {
+            "node": "Parse Internal Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Draft Reply": {
+      "main": [
+        [
+          {
+            "node": "Merge Reply + Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Internal Note": {
+      "main": [
+        [
+          {
+            "node": "Merge Reply + Note",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Reply + Note": {
+      "main": [
+        [
+          {
+            "node": "AI 4 - Review Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 4 - Review Draft": {
+      "main": [
+        [
+          {
+            "node": "Parse Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Review": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Finalize Approved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI 5 - Revise Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 5 - Revise Reply": {
+      "main": [
+        [
+          {
+            "node": "Parse Revised Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Revised Reply": {
+      "main": [
+        [
+          {
+            "node": "AI 4 - Review Revised Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 4 - Review Revised Reply": {
+      "main": [
+        [
+          {
+            "node": "Parse Revised Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Revised Review": {
+      "main": [
+        [
+          {
+            "node": "Finalize After Revision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Approved": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Human Review": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "cloudnote-groq-workflow-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
