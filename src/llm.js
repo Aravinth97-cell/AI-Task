@@ -2,8 +2,8 @@ import './env.js';
 
 export const MOCK = String(process.env.MOCK_LLM ?? 'true').toLowerCase() === 'true';
 export const MODELS = {
-  fast: process.env.GROQ_MODEL_FAST || 'llama-3.1-8b-instant',
-  smart: process.env.GROQ_MODEL_SMART || 'llama-3.3-70b-versatile',
+fast: process.env.GROQ_MODEL_FAST || 'openai/gpt-oss-20b',
+smart: process.env.GROQ_MODEL_SMART || 'openai/gpt-oss-120b',
 };
 
 export async function askLLM({ step, model = 'fast', system, prompt, json = false }) {
