@@ -89,10 +89,10 @@ AI 2 and AI 3 run in parallel using `Promise.all`. Application code—not the LL
 4. For live Groq calls, add your own key in `.env` and set `MOCK_LLM=false`:
 
    ```env
-   GROQ_API_KEY=your_actual_groq_api_key
-   MOCK_LLM=false
-   GROQ_MODEL_FAST=llama-3.1-8b-instant
-   GROQ_MODEL_SMART=llama-3.3-70b-versatile
+ GROQ_API_KEY=your_actual_groq_api_key
+MOCK_LLM=false
+GROQ_MODEL_FAST=openai/gpt-oss-20b
+GROQ_MODEL_SMART=openai/gpt-oss-120b
    ```
 
    Keep `.env` private. Never paste your API key into source code or commit it to GitHub.
